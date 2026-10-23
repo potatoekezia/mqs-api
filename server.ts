@@ -128,6 +128,36 @@ async function startServer() {
     }
   });
 
+  // Cloud-synced solve stats across all 20+ users
+  const geminiSolveStats: Record<string, { solves: number; lastUsed: number }> = {};
+  let totalServerAiSolves = 0;
+
+  // Endpoint to retrieve aggregate solve stats across instances
+  app.get('/api/gemini/stats', (_req, res) => {
+    res.json({
+      success: true,
+      stats: geminiSolveStats,
+      totalAiSolves: totalServerAiSolves,
+    });
+  });
+
+  // Endpoint to increment stats when a client-side solve completes
+  app.post('/api/gemini/stats/increment', (req, res) => {
+    try {
+      const { apiKey } = req.body;
+      const shortKey = typeof apiKey === 'string' && apiKey.length >= 8 ? apiKey.substring(0, 10) : 'default';
+      if (!geminiSolveStats[shortKey]) {
+        geminiSolveStats[shortKey] = { solves: 0, lastUsed: Date.now() };
+      }
+      geminiSolveStats[shortKey].solves += 1;
+      geminiSolveStats[shortKey].lastUsed = Date.now();
+      totalServerAiSolves += 1;
+      res.json({ success: true, count: geminiSolveStats[shortKey].solves, total: totalServerAiSolves });
+    } catch {
+      res.json({ success: false });
+    }
+  });
+
   // Server-side Gemini API solve endpoint
   app.post('/api/gemini/solve', async (req, res) => {
     try {
@@ -162,6 +192,15 @@ async function startServer() {
 
           const text = response?.text ? response.text.trim() : '';
           if (text) {
+            // Track successful AI solve across all users
+            const effectiveKey = typeof apiKey === 'string' && apiKey.length >= 8 ? apiKey.substring(0, 10) : 'server_key';
+            if (!geminiSolveStats[effectiveKey]) {
+              geminiSolveStats[effectiveKey] = { solves: 0, lastUsed: Date.now() };
+            }
+            geminiSolveStats[effectiveKey].solves += 1;
+            geminiSolveStats[effectiveKey].lastUsed = Date.now();
+            totalServerAiSolves += 1;
+
             return res.json({ text, success: true, model });
           }
         } catch (err: any) {
